@@ -645,19 +645,11 @@ class read_swift:
 
 if __name__ == '__main__':
     from mpi4py import MPI
-    import time
 
     comm = MPI.COMM_WORLD
-    comm.Set_errhandler(MPI.ERRORS_ARE_FATAL)
 
-    tic = time.time()
-    snap = '/cosma6/data/dp004/rttw52/SibeliusOutput/Sibelius_200Mpc_1/joined_hsmls_index/volume1/0199.hdf5'
-    snap = '/cosma6/data/dp004/rttw52/SibeliusOutput/Sibelius_200Mpc_256/snapshots/Sibelius_200Mpc_256_0199/Sibelius_200Mpc_256_0199.0.hdf5'
+    snap = '/path_to_snap/snap.hdf5'
     x = read_swift(snap, comm=comm, verbose=True)
     x.select_region(1,300,700,300,700,300,700)
     x.split_selection()
     ids = x.read_dataset(1, 'ParticleIDs')
-    coords = x.read_dataset(1, 'Coordinates')
-    mask = np.where(ids == 8382864541576428481)
-    comm.barrier()
-    print(coords[mask], ids[mask])
