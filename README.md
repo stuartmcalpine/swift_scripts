@@ -34,7 +34,7 @@ region = [0,100,0,100,0,100]
 swift.select_region(parttype, *region)
 
 # Divide selection between ranks (needs to be invoked even for non-mpi case).
-swift.select_region()
+swift.split_selection()
 
 # Read data.
 ids = swift.read_dataset(parttype, "ParticleIDs")
@@ -60,7 +60,7 @@ region = [0,100,0,100,0,100]
 swift.select_region(parttype, *region)
 
 # Divide selection between ranks (needs to be invoked even for non-mpi case).
-swift.select_region()
+swift.split_selection()
 
 # Read data.
 ids = swift.read_dataset(parttype, "ParticleIDs")
