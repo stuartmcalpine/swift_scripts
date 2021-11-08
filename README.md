@@ -1,12 +1,10 @@
-read_swift.py
--------------
+# read_swift.py
 
 - Simple python3 script to read SWIFT (https://github.com/SWIFTSIM/swiftsim) snapshot outputs (Author Stuart McAlpine)
 
 - Similar in style to John Helly's `Read_Eagle` (https://gitlab.cosma.dur.ac.uk/jch/Read_Eagle) code to read EAGLE snapshot outputs.
 
-Input params to read_swift.py
------------------------------
+### Input params to read_swift.py
 
 | Input | Description | Is optional? | Default option |
 | ----- | ----------- | --------- | ------- | 
@@ -18,8 +16,7 @@ Input params to read_swift.py
 | | "non_collective": Each rank reads its own file part (recommended for multiple smaller files) |
 | max_concur_io= | When using distributed_format=non_collective, how many ranks can read at once | Yes | 64 |
 
-Example usage (No MPI case)
----------------------------
+### Example usage (No MPI case)
 
 ```python
 from read_swift import read_swift
@@ -40,8 +37,7 @@ swift.split_selection()
 ids = swift.read_dataset(parttype, "ParticleIDs")
 ```
 
-Example usage (MPI case)
----------------------------
+### Example usage (MPI case)
 
 ```python
 from mpi4py import MPI
