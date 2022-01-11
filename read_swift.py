@@ -43,7 +43,7 @@ class read_swift:
         if self.comm is None:
             print(m)
         else:
-            if self.comm.Get_rank() == 0:
+            if self.comm_rank == 0:
                 print(m)
 
     def split_selection(self):
@@ -70,8 +70,8 @@ class read_swift:
         self.index_data['num_to_load'] = []
         self.index_data['total_num_to_load'] = 0
 
-        for fileno in np.unique(self.region_data['files']):
-            if fileno % self.comm_size != self.comm_rank: continue
+        for i, fileno in enumerate(np.unique(self.region_data['files'])):
+            if i % self.comm_size != self.comm_rank: continue
             mask = np.where(self.region_data['files'] == fileno)
 
             self.index_data['files'].append(fileno)
@@ -99,78 +99,80 @@ class read_swift:
 
             # Loop over each file.
             for fileno in np.unique(self.region_data['files']):
-                mask = np.where(self.region_data['files'] == fileno)
+                file_mask = np.where(self.region_data['files'] == fileno)
 
                 # How many particles from this file will each core load?
-                num_to_load_from_this_file = np.sum(self.region_data['num_to_load'][mask])
-                num_per_core = num_to_load_from_this_file // self.comm_size
-                my_num_to_load = num_per_core
-                if self.comm_rank == self.comm_size-1:
-                    my_num_to_load += num_to_load_from_this_file % self.comm_size
+                num_to_load_from_this_file = np.sum(self.region_data['num_to_load'][file_mask])
+                num_per_core = np.zeros(self.comm_size, dtype='i8')
+                num_per_core[:] = num_to_load_from_this_file // self.comm_size
+                num_per_core[-1] += num_to_load_from_this_file % self.comm_size
 
                 # The case where this file has few particles compared to the number of ranks.
-                if num_per_core < 100:
+                if num_per_core[0] < 1e3:
                     if self.comm_rank == self.comm_size - 1: 
                         if self.verbose:
-                            print('Rank %i will load %i particles l=%s r=%s from file=%i'\
-                                    %(self.comm_rank, my_num_to_load,
-                                        tmp_my_lefts, tmp_my_rights, fileno))
+                            print('Rank %i will load %i particles file=%i'\
+                                    %(self.comm_rank, num_to_load_from_this_file, fileno))
         
-                        self.index_data['lefts'].append([0])
-                        self.index_data['rights'].append([my_num_to_load])
+                        self.index_data['lefts'].append(self.region_data['lefts'][file_mask])
+                        self.index_data['rights'].append(self.region_data['rights'][file_mask])
                         self.index_data['files'].append(fileno)
-                        self.index_data['num_to_load'].append([my_num_to_load])
-                        self.index_data['total_num_to_load'] += my_num_to_load
+                        self.index_data['num_to_load'].append(
+                            self.region_data['num_to_load'][file_mask])
+                        self.index_data['total_num_to_load'] += num_to_load_from_this_file
 
                 # The case where this file has many particles per rank.
                 else:
                     # What particles will each core load?
-                    tmp_my_lefts = []
-                    tmp_my_rights = []
-                    tmp_my_files = []
-                    count = 0       # How many total particles have been loaded.
+                    tmp_my_lefts = []; tmp_my_rights = []; tmp_my_files = []
                     my_count = np.zeros(self.comm_size, dtype='i8') # How many ps have I loaded?
 
-                    for i,(l,r,chunk_no) in enumerate(zip(self.region_data['lefts'][mask],
-                                                       self.region_data['rights'][mask],
-                                                       self.region_data['num_to_load'][mask])):
-                        mask = np.where(my_count < num_per_core)
-                        
-                        # How many cores will this chunk be spread over?
-                        num_cores_this_chunk = \
-                            ((chunk_no + my_count[np.min(mask)]) // num_per_core) + 1
+                    for l,r,chunk_no in zip(self.region_data['lefts'][file_mask],
+                                            self.region_data['rights'][file_mask],
+                                            self.region_data['num_to_load'][file_mask]):
+
                         chunk_bucket = chunk_no
-                        for j in range(num_cores_this_chunk):
-                            if np.min(mask)+j < self.comm_size:
-                                if my_count[np.min(mask)+j] + chunk_bucket > num_per_core:
-                                    if self.comm_rank == np.min(mask)+j:
-                                        tmp_my_lefts.append(l + chunk_no - chunk_bucket)
-                                        tmp_my_rights.append(l + chunk_no - chunk_bucket + \
-                                                num_per_core - my_count[np.min(mask)+j])
+                        tmp_offset = 0
+
+                        # Allocate this chunk over the cores.
+                        while chunk_bucket > 0:
+                            for j in range(self.comm_size):
+                                # No room left on this core.
+                                if my_count[j] == num_per_core[j]: continue
+
+                                if my_count[j] + chunk_bucket <= num_per_core[j]:
+                                    # Can all fit on this core.
+                                    my_count[j] += chunk_bucket
+                                    if self.comm_rank == j:
+                                        tmp_my_lefts.append(l + tmp_offset)
+                                        tmp_my_rights.append(l + tmp_offset + chunk_bucket)
                                         tmp_my_files.append(fileno)
-                                    chunk_bucket -= (num_per_core - my_count[np.min(mask)+j])
-                                    my_count[np.min(mask)+j] = num_per_core
+                                    chunk_bucket = 0
                                 else:
-                                    if self.comm_rank == np.min(mask)+j:
-                                        tmp_my_lefts.append(l + chunk_no - chunk_bucket)
-                                        tmp_my_rights.append(r)
+                                    # Only a bit can fit on this core.
+                                    diff = num_per_core[j] - my_count[j]
+                                    my_count[j] += diff
+                                    chunk_bucket -= diff
+                                    if self.comm_rank == j:
+                                        tmp_my_lefts.append(l + tmp_offset)
+                                        tmp_my_rights.append(l + tmp_offset + diff)
                                         tmp_my_files.append(fileno)
-                                    my_count[np.min(mask)+j] += chunk_bucket
-                            else:
-                                if self.comm_rank == self.comm_size - 1:
-                                    if my_count[-1] < my_num_to_load:
-                                        tmp_my_rights[-1] += chunk_bucket
-                                        my_count[-1] += chunk_bucket
-                  
+                                    tmp_offset += diff
+
+                                # All allocated.
+                                if chunk_bucket == 0: break
+                    assert np.sum(my_count) == num_to_load_from_this_file
+
                     # Make sure we got them all.
-                    assert self.comm.allreduce(
-                        np.sum(np.array(tmp_my_rights)-np.array(tmp_my_lefts))) \
-                       == num_to_load_from_this_file, 'Did not divide up the particles correctly'
+                    chk_sum = self.comm.allreduce(
+                            np.sum(np.array(tmp_my_rights)-np.array(tmp_my_lefts)))
+                    assert chk_sum == num_to_load_from_this_file,\
+                        f'Did not divide ps correctly {chk_sum} ne {num_to_load_from_this_file}'
         
                     if self.verbose:
                         self.comm.barrier()
                         print('Rank %i will load %i particles l=%s r=%s from file=%i'\
-                                %(self.comm_rank, my_num_to_load,
+                                %(self.comm_rank, num_per_core[self.comm_rank],
                                     tmp_my_lefts, tmp_my_rights, fileno))
     
                     self.index_data['lefts'].append(tmp_my_lefts)
@@ -296,7 +298,7 @@ class read_swift:
             assert np.sum(self.region_data['num_to_load']) \
                     == self.region_data['total_num_to_load'], 'Error loading region, count err'
 
-            # We have top level cell information, just load selected region.
+        # We have top level cell information, just load selected region.
         elif len(mask[0]) > 0:
             if self.comm_rank == 0:
                 f = h5py.File(self.fname, "r")
@@ -321,7 +323,7 @@ class read_swift:
                 counts = counts[mask]
                 files = files[mask]
 
-                if self.verbose:
+                if self.verbose and self.comm_rank == 0:
                     print('%i cells selected from %i file(s).'%(len(offsets),len(np.unique(files))))
                 
                 # Case of no cells.
@@ -418,7 +420,7 @@ class read_swift:
             dtype = self.comm.bcast(dtype)
 
         # Number of particles this core is loading.
-        tot = np.sum(self.index_data['num_to_load'])
+        tot = np.sum(np.concatenate(self.index_data['num_to_load']))
         num_files = len(self.index_data['num_to_load'])
         
         if self.verbose:
